@@ -9,7 +9,7 @@ from pyroute2 import IPRoute, NetNS, IPDB, NSPopen
 
 #from builtins import input
 from time import sleep
-from simulation import Simulation
+#from simulation import Simulation
 import sys
 
 ipr = IPRoute()
@@ -20,13 +20,11 @@ bpf_text = """
 #include <uapi/linux/ptrace.h>
 #include <net/sock.h>
 #include <bcc/proto.h>
-#include <linux/types.h>
-#include <linux/string.h>
-#include <linux/ctype.h>
 
 #define IP_TCP 	6
+#define ETH_HLEN 14
 #define DEBUG 	1
-
+#define MAX_PAYLOAD_LEN 50
 /*
 //definitions are already included in <bcc/proto.h>
 
@@ -117,46 +115,71 @@ int handle_ingress(struct __sk_buff *skb) {
     	bpf_trace_printk("no_tcp-->ignore\\n");
     	goto EOP;
     }
-    //Begin processing
+  //Begin processing
 
-    struct tcp_t *tcp = cursor_advance(cursor, sizeof(*tcp));
+  struct tcp_t *tcp = cursor_advance(cursor, sizeof(*tcp));
 
-    struct IPKey ipkey;
-    struct IPLeaf ipleaf;
-    u32  tcp_header_len = 0;
-    unsigned char *  payload;
+  struct IPKey ipkey;
+  struct IPLeaf ipleaf;
+  u32  tcp_hlen = 0;
+  u32  ip_hlen = 0;
+  u32  payload_offset = 0;
+  u32 payload_len = 0;
+  u32 payload_end = 0;
+  u32 payload_ptr = 0;
 
-  	u32 dip = ip->dst;
-  	u32 sip = ip->src;
-  	u64 dmac = ethernet->dst;
-  	u64 smac = ethernet->src;
-  	unsigned short sport = tcp->src_port;
-  	unsigned short dport = tcp->dst_port;
+	u32 dip = ip->dst;
+	u32 sip = ip->src;
+	u64 dmac = ethernet->dst;
+	u64 smac = ethernet->src;
+	unsigned short sport = tcp->src_port;
+	unsigned short dport = tcp->dst_port;
 
-  	ipkey.sip=ip->src;
-  	ipkey.dip=ip->dst;
-  	ipkey.sport=tcp->src_port;
-  	ipkey.dport=tcp->dst_port;
+	ipkey.sip=ip->src;
+	ipkey.dip=ip->dst;
+	ipkey.sport=tcp->src_port;
+	ipkey.dport=tcp->dst_port;
 
-  	/*TO CHECK (zeros not printed) && DEBUG*/
-	bpf_trace_printk("macsrc:%x\\n",ethernet->src);
-	bpf_trace_printk("macdst:%x\\n",ethernet->dst);
-	bpf_trace_printk("ethtyp:%x\\n",ethernet->type);
+	/*TO CHECK (zeros not printed) && DEBUG*/
+	bpf_trace_printk("macsrc:%llx\\n",ethernet->src);
+	bpf_trace_printk("macdst:%llx\\n",ethernet->dst);
+	bpf_trace_printk("ethtyp:0x%x\\n",ethernet->type);
 	bpf_trace_printk("ipsrc:%x\\n",ip->src);
-  	bpf_trace_printk("ipdst:%x\\n",ip->dst);
-  	bpf_trace_printk("portsrc:%d\\n",sport);
-  	bpf_trace_printk("portdst:%d\\n",dport);
+	bpf_trace_printk("ipdst:%x\\n",ip->dst);
+	bpf_trace_printk("portsrc:%d\\n",sport);
+	bpf_trace_printk("portdst:%d\\n",dport);
 
-  	ipleaf.is_header_splitted = 0;
+	ipleaf.is_header_splitted = 0;
 
-  	/* retireve the position of the payload of the tcp packet */
-	tcp_header_len = tcp->offset << 2;
-	bpf_trace_printk("tcp->offset-u32:%d\\n",tcp_header_len);
-	payload = ((unsigned char *) tcp + tcp_header_len);
-	
-	//problems with ebpf addressing - find another way to use pointer
-	
-  	return 1;
+	/* retireve the position of the payload of the tcp packet */
+  ip_hlen = ip->hlen << 2;
+  tcp_hlen = tcp->offset << 2;
+	payload_offset = ETH_HLEN + ip_hlen + tcp_hlen; 
+  payload_len = ip->tlen - ip_hlen -tcp_hlen;
+  payload_end = payload_offset + payload_len; //Starting from byte 0 of the eth frame
+  payload_ptr = payload_offset;
+
+  bpf_trace_printk("ip_hlen:%d\\n",ip_hlen);
+  bpf_trace_printk("tcp_hlen:%d\\n",tcp_hlen);
+  bpf_trace_printk("payload_offset:%d\\n",payload_offset);
+	bpf_trace_printk("payload_len:%d\\n",payload_len);
+  bpf_trace_printk("payload_end:%d\\n",payload_end);
+
+  if(payload_len == 0){
+      bpf_trace_printk("--No-Payload--\\n");
+      goto EOP;
+  }
+  
+  unsigned long dat;
+  int kk;
+  //for now cycles 20+ iterations -> crash!
+  //for debug print first 20 byte of payload in hex
+  for (kk=56;kk<77;kk++){
+    dat = load_byte(skb,kk);
+    bpf_trace_printk("dat:%x\\n",dat);
+  }
+  	
+  return 1;
 
 EOP:
   return 0;
