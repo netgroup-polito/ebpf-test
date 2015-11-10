@@ -7,9 +7,7 @@ from __future__ import print_function
 from bcc import BPF
 from pyroute2 import IPRoute, NetNS, IPDB, NSPopen
 
-#from builtins import input
 from time import sleep
-#from simulation import Simulation
 import sys
 
 ipr = IPRoute()
@@ -20,11 +18,11 @@ bpf_text = """
 #include <uapi/linux/ptrace.h>
 #include <net/sock.h>
 #include <bcc/proto.h>
+//#include <bpf.h>
 
 #define IP_TCP 	6
 #define ETH_HLEN 14
-#define DEBUG 	1
-#define MAX_PAYLOAD_LEN 50
+
 /*
 //definitions are already included in <bcc/proto.h>
 
@@ -79,22 +77,7 @@ struct tcp_t {
 } BPF_PACKET_HEADER;
 */
 
-struct IPKey {
-  u32 dip;
-  u32 sip;
-  unsigned short sport;
-  unsigned short dport;
-};
-
-struct IPLeaf {
-  int is_header_splitted;
-  long last_use;
-};
-
-BPF_TABLE("hash", struct IPKey, struct IPLeaf, sessions, 1024);
-
 int handle_ingress(struct __sk_buff *skb) {
-	bpf_trace_printk("--PKT----\\n");
 
 	u32 ifindex_in, *ifindex_p;
 	u8 *cursor = 0;
@@ -104,7 +87,7 @@ int handle_ingress(struct __sk_buff *skb) {
 
 	if (!(ethernet->type == 0x0800)){
 		//not ip -> ignore pkt
-		bpf_trace_printk("no_ip_-->ignore\\n");
+		//bpf_trace_printk("no_ip_-->ignore\\n");
 		goto EOP;	
 	}
 
@@ -112,15 +95,14 @@ int handle_ingress(struct __sk_buff *skb) {
 
   	if (ip->nextp != IP_TCP) {
     	//not tcp -> ignore pkt
-    	bpf_trace_printk("no_tcp-->ignore\\n");
+    	//bpf_trace_printk("no_tcp-->ignore\\n");
     	goto EOP;
     }
+
   //Begin processing
 
   struct tcp_t *tcp = cursor_advance(cursor, sizeof(*tcp));
 
-  struct IPKey ipkey;
-  struct IPLeaf ipleaf;
   u32  tcp_hlen = 0;
   u32  ip_hlen = 0;
   u32  payload_offset = 0;
@@ -135,22 +117,6 @@ int handle_ingress(struct __sk_buff *skb) {
 	unsigned short sport = tcp->src_port;
 	unsigned short dport = tcp->dst_port;
 
-	ipkey.sip=ip->src;
-	ipkey.dip=ip->dst;
-	ipkey.sport=tcp->src_port;
-	ipkey.dport=tcp->dst_port;
-
-	/*TO CHECK (zeros not printed) && DEBUG*/
-	bpf_trace_printk("macsrc:%llx\\n",ethernet->src);
-	bpf_trace_printk("macdst:%llx\\n",ethernet->dst);
-	bpf_trace_printk("ethtyp:0x%x\\n",ethernet->type);
-	bpf_trace_printk("ipsrc:%x\\n",ip->src);
-	bpf_trace_printk("ipdst:%x\\n",ip->dst);
-	bpf_trace_printk("portsrc:%d\\n",sport);
-	bpf_trace_printk("portdst:%d\\n",dport);
-
-	ipleaf.is_header_splitted = 0;
-
 	/* retireve the position of the payload of the tcp packet */
   ip_hlen = ip->hlen << 2;
   tcp_hlen = tcp->offset << 2;
@@ -159,30 +125,58 @@ int handle_ingress(struct __sk_buff *skb) {
   payload_end = payload_offset + payload_len; //Starting from byte 0 of the eth frame
   payload_ptr = payload_offset;
 
-  bpf_trace_printk("ip_hlen:%d\\n",ip_hlen);
-  bpf_trace_printk("tcp_hlen:%d\\n",tcp_hlen);
-  bpf_trace_printk("payload_offset:%d\\n",payload_offset);
-	bpf_trace_printk("payload_len:%d\\n",payload_len);
-  bpf_trace_printk("payload_end:%d\\n",payload_end);
-
   if(payload_len == 0){
-      bpf_trace_printk("--No-Payload--\\n");
       goto EOP;
   }
   
-  unsigned long dat;
-  int kk;
-  //for now cycles 20+ iterations -> crash!
-  //for debug print first 20 byte of payload in hex
-  for (kk=56;kk<77;kk++){
-    dat = load_byte(skb,kk);
-    bpf_trace_printk("dat:%x\\n",dat);
+  unsigned long dat[7];
+  int i = 0;
+  int j = 0;
+  for (i=payload_offset;i<(payload_offset+7);i++){
+    dat[j] = load_byte(skb,i);
+    j++;
   }
-  	
+
+  //HTTP
+  if ( (dat[0] == 'H') && (dat[1] == 'T') && (dat[2] == 'T') && (dat[3] == 'P')){
+    bpf_trace_printk("HTTP ------------------------------------------------\\n");
+    goto KEEP;
+  }
+  //GET
+  if ( (dat[0] == 'G') && (dat[1] == 'E') && (dat[2] == 'T') ){
+    bpf_trace_printk("GET -------------------------------------------------\\n");
+    goto KEEP;
+  }
+  //POST
+  if ( (dat[0] == 'P') && (dat[1] == 'O') && (dat[2] == 'S') && (dat[3] == 'T')){
+    bpf_trace_printk("POST ------------------------------------------------\\n");
+    goto KEEP;
+  }
+  //PUT
+  if ( (dat[0] == 'P') && (dat[1] == 'U') && (dat[2] == 'T') ){
+    bpf_trace_printk("PUT -------------------------------------------------\\n");
+    goto KEEP;
+  }
+  //DELETE
+  if ( (dat[0] == 'D') && (dat[1] == 'E') && (dat[2] == 'L') && (dat[3] == 'E') && (dat[4] == 'T') && (dat[5] == 'E')){
+    bpf_trace_printk("DELETE ------------------------------------------------\\n");
+    goto KEEP;
+  }
+  //HEAD
+  if ( (dat[0] == 'H') && (dat[1] == 'E') && (dat[2] == 'A') && (dat[3] == 'D')){
+    bpf_trace_printk("HEAD ------------------------------------------------\\n");
+    goto KEEP;
+  }
+
+  goto EOP;
+
+  KEEP:
+  //Do something to send packet to userspace!
+
   return 1;
 
 EOP:
-  return 0;
+  return -1;
 }
 """
 
@@ -204,3 +198,4 @@ while 1:
 	#DEBUG ONLY - not stable
 	#print bpf_trace_printk
 	print("%s" % m)
+  #b.trace_print()
