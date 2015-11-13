@@ -1,24 +1,28 @@
 #!/usr/bin/python
 #
+#Bertrone Matteo - Polytechnic of Turin
+#November 2015
+#
 #eBPF application that parses HTTP packets 
 #and extracts (and prints on screen) the URL contained in the GET/POST request.
+#
+#eBPF is used as SOCKET_FILTER attached to eth0 interface.
+#only packet of type ip and tcp containing HTTP GET/POST are returned to userspace, others dropped
+#
+#python userspace script prints on stdout the first line of the HTTP GET/POST
+
 
 from __future__ import print_function
 from bcc import BPF
-from pyroute2 import IPRoute, NetNS, IPDB, NSPopen
 
-from time import sleep
 import sys
+import socket
+import os
 
-ipr = IPRoute()
-
-#it's possible to write a separated .c file but sometimes crashes, so I used inline c code
-# define BPF program
 bpf_text = """
 #include <uapi/linux/ptrace.h>
 #include <net/sock.h>
 #include <bcc/proto.h>
-//#include <bpf.h>
 
 #define IP_TCP 	6
 #define ETH_HLEN 14
@@ -82,24 +86,18 @@ int handle_ingress(struct __sk_buff *skb) {
 	u32 ifindex_in, *ifindex_p;
 	u8 *cursor = 0;
 
-	/*FILTER "ip and tcp"*/
+	/*filter "ip and tcp"*/
 	struct ethernet_t *ethernet = cursor_advance(cursor, sizeof(*ethernet));
-
 	if (!(ethernet->type == 0x0800)){
-		//not ip -> ignore pkt
-		//bpf_trace_printk("no_ip_-->ignore\\n");
-		goto EOP;	
+		goto DROP;	
 	}
 
 	struct ip_t *ip = cursor_advance(cursor, sizeof(*ip));
+  if (ip->nextp != IP_TCP) {
+    goto DROP;
+  }
 
-  	if (ip->nextp != IP_TCP) {
-    	//not tcp -> ignore pkt
-    	//bpf_trace_printk("no_tcp-->ignore\\n");
-    	goto EOP;
-    }
-
-  //Begin processing
+  //begin processing
 
   struct tcp_t *tcp = cursor_advance(cursor, sizeof(*tcp));
 
@@ -110,14 +108,7 @@ int handle_ingress(struct __sk_buff *skb) {
   u32 payload_end = 0;
   u32 payload_ptr = 0;
 
-	u32 dip = ip->dst;
-	u32 sip = ip->src;
-	u64 dmac = ethernet->dst;
-	u64 smac = ethernet->src;
-	unsigned short sport = tcp->src_port;
-	unsigned short dport = tcp->dst_port;
-
-	/* retireve the position of the payload of the tcp packet */
+	//retrieve the position of the payload of the tcp packet
   ip_hlen = ip->hlen << 2;
   tcp_hlen = tcp->offset << 2;
 	payload_offset = ETH_HLEN + ip_hlen + tcp_hlen; 
@@ -126,76 +117,118 @@ int handle_ingress(struct __sk_buff *skb) {
   payload_ptr = payload_offset;
 
   if(payload_len == 0){
-      goto EOP;
+      goto DROP;
   }
   
+  //load first 7 payload bytes in dat array -> for the http filter
   unsigned long dat[7];
   int i = 0;
   int j = 0;
-  for (i=payload_offset;i<(payload_offset+7);i++){
-    dat[j] = load_byte(skb,i);
+  for (i = payload_offset ; i < (payload_offset + 7) ; i++){
+    dat[j] = load_byte(skb , i);
     j++;
   }
 
   //HTTP
   if ( (dat[0] == 'H') && (dat[1] == 'T') && (dat[2] == 'T') && (dat[3] == 'P')){
-    bpf_trace_printk("HTTP ------------------------------------------------\\n");
     goto KEEP;
   }
   //GET
   if ( (dat[0] == 'G') && (dat[1] == 'E') && (dat[2] == 'T') ){
-    bpf_trace_printk("GET -------------------------------------------------\\n");
     goto KEEP;
   }
   //POST
   if ( (dat[0] == 'P') && (dat[1] == 'O') && (dat[2] == 'S') && (dat[3] == 'T')){
-    bpf_trace_printk("POST ------------------------------------------------\\n");
     goto KEEP;
   }
   //PUT
   if ( (dat[0] == 'P') && (dat[1] == 'U') && (dat[2] == 'T') ){
-    bpf_trace_printk("PUT -------------------------------------------------\\n");
     goto KEEP;
   }
   //DELETE
   if ( (dat[0] == 'D') && (dat[1] == 'E') && (dat[2] == 'L') && (dat[3] == 'E') && (dat[4] == 'T') && (dat[5] == 'E')){
-    bpf_trace_printk("DELETE ------------------------------------------------\\n");
     goto KEEP;
   }
   //HEAD
   if ( (dat[0] == 'H') && (dat[1] == 'E') && (dat[2] == 'A') && (dat[3] == 'D')){
-    bpf_trace_printk("HEAD ------------------------------------------------\\n");
     goto KEEP;
   }
 
-  goto EOP;
+  goto DROP;
 
   KEEP:
-  //Do something to send packet to userspace!
-
-  return 1;
-
-EOP:
+  //-1 return the packet to userspace listening on the socket
   return -1;
+
+DROP:
+  //0 drop the packet
+  return 0;
 }
 """
+
+#convert string to hex
+#for debug - to print raw packet in hex
+def toHex(s):
+    lst = []
+    for ch in s:
+        hv = hex(ord(ch)).replace('0x', '')
+        if len(hv) == 1:
+            hv = '0'+hv
+        lst.append(hv)
+    
+    return reduce(lambda x,y:x+y, lst)
 
 # initialize BPF
 b = BPF(text=bpf_text)
 
-#load function in kernel ebpf vm
+#load function
 fn = b.load_func("handle_ingress", BPF.SOCKET_FILTER)
 
 #attach function to pysical interface
 BPF.attach_raw_socket(fn, "eth0")
 
-# format output
+#get socket fd
+sfd = fn.sock
+s = socket.fromfd(sfd,socket.PF_PACKET,socket.SOCK_RAW,socket.IPPROTO_IP)
+s.setblocking(True)
+
 while 1:
+  #print ("Reading Packet ...")
+  str = os.read(sfd,2048)
 
-	#(task, pid, cpu, flags, ts, msg) = b.trace_fields()
-	(t,p,c,f,t,m) = b.trace_fields()
+  #DEBUG - print raw packet in hex
+  #hexstr = toHex(str)
+  #print ("%s" % hexstr)
 
-	#DEBUG ONLY - not stable
-	#print bpf_trace_printk
-	print("%s" % m)
-  #b.trace_print()
+  #convert into bytearray
+  ba = bytearray(str)
+  
+  ETH_HLEN = 14
+  
+  #total length
+  ip_tlen = ba[ETH_HLEN + 2]
+  ip_tlen = ip_tlen << 8
+  ip_tlen =ip_tlen + ba[ETH_HLEN+3]
+  
+  #ip headet lenght
+  ip_hlen = ba[ETH_HLEN]
+  ip_hlen = ip_hlen & 0x0F
+  ip_hlen = ip_hlen << 2
+
+  #tcp header lenght
+  tcp_hlen = ba[ETH_HLEN + ip_hlen + 12]
+  tcp_hlen = tcp_hlen & 0xF0
+  tcp_hlen = tcp_hlen >> 2
+  
+  #payload offset
+  payload_offset = ETH_HLEN + ip_hlen + tcp_hlen
+  
+  #print only first line of HTTP GET/POST - terminate with 0xOD 0xOA (\r\n)
+  #if we want to print all the header print until \r\n\r\n
+  for i in range (payload_offset-1,len(ba)):
+    if (ba[i]== 0x0A):
+      if (ba[i-1] == 0x0D):
+        break
+    print ("%c" % chr(ba[i]), end = "")
+  print("")
+
