@@ -6,11 +6,11 @@
 #eBPF application that parses HTTP packets 
 #and extracts (and prints on screen) the URL contained in the GET/POST request.
 #
-#eBPF is used as SOCKET_FILTER attached to eth0 interface.
+#eBPF program http_filter is used as SOCKET_FILTER attached to eth0 interface.
 #only packet of type ip and tcp containing HTTP GET/POST are returned to userspace, others dropped
 #
-#python userspace script prints on stdout the first line of the HTTP GET/POST
-
+#python script uses bcc BPF Compiler Collection by iovisor (https://github.com/iovisor/bcc)
+#and prints on stdout the first line of the HTTP GET/POST request containing the url
 
 from __future__ import print_function
 from bcc import BPF
@@ -19,155 +19,9 @@ import sys
 import socket
 import os
 
-bpf_text = """
-#include <uapi/linux/ptrace.h>
-#include <net/sock.h>
-#include <bcc/proto.h>
-
-#define IP_TCP 	6
-#define ETH_HLEN 14
-
-/*
-//definitions are already included in <bcc/proto.h>
-
-struct ethernet_t {
-  unsigned long long  dst:48;
-  unsigned long long  src:48;
-  unsigned int        type:16;
-} BPF_PACKET_HEADER;
-
-struct ip_t {
-  unsigned char   ver:4;           // byte 0
-  unsigned char   hlen:4;
-  unsigned char   tos;
-  unsigned short  tlen;
-  unsigned short  identification; // byte 4
-  unsigned short  ffo_unused:1;
-  unsigned short  df:1;
-  unsigned short  mf:1;
-  unsigned short  foffset:13;
-  unsigned char   ttl;             // byte 8
-  unsigned char   nextp;
-  unsigned short  hchecksum;
-  unsigned int    src;            // byte 12
-  unsigned int    dst;            // byte 16
-} BPF_PACKET_HEADER;
-
-struct udp_t {
-  unsigned short sport;
-  unsigned short dport;
-  unsigned short length;
-  unsigned short crc;
-} BPF_PACKET_HEADER;
-
-struct tcp_t {
-  unsigned short  src_port;   // byte 0
-  unsigned short  dst_port;
-  unsigned int    seq_num;    // byte 4
-  unsigned int    ack_num;    // byte 8
-  unsigned char   offset:4;    // byte 12
-  unsigned char   reserved:4;
-  unsigned char   flag_cwr:1;
-  unsigned char   flag_ece:1;
-  unsigned char   flag_urg:1;
-  unsigned char   flag_ack:1;
-  unsigned char   flag_psh:1;
-  unsigned char   flag_rst:1;
-  unsigned char   flag_syn:1;
-  unsigned char   flag_fin:1;
-  unsigned short  rcv_wnd;
-  unsigned short  cksum;      // byte 16
-  unsigned short  urg_ptr;
-} BPF_PACKET_HEADER;
-*/
-
-int handle_ingress(struct __sk_buff *skb) {
-
-	u32 ifindex_in, *ifindex_p;
-	u8 *cursor = 0;
-
-	/*filter "ip and tcp"*/
-	struct ethernet_t *ethernet = cursor_advance(cursor, sizeof(*ethernet));
-	if (!(ethernet->type == 0x0800)){
-		goto DROP;	
-	}
-
-	struct ip_t *ip = cursor_advance(cursor, sizeof(*ip));
-  if (ip->nextp != IP_TCP) {
-    goto DROP;
-  }
-
-  //begin processing
-
-  struct tcp_t *tcp = cursor_advance(cursor, sizeof(*tcp));
-
-  u32  tcp_hlen = 0;
-  u32  ip_hlen = 0;
-  u32  payload_offset = 0;
-  u32 payload_len = 0;
-  u32 payload_end = 0;
-  u32 payload_ptr = 0;
-
-	//retrieve the position of the payload of the tcp packet
-  ip_hlen = ip->hlen << 2;
-  tcp_hlen = tcp->offset << 2;
-	payload_offset = ETH_HLEN + ip_hlen + tcp_hlen; 
-  payload_len = ip->tlen - ip_hlen -tcp_hlen;
-  payload_end = payload_offset + payload_len; //Starting from byte 0 of the eth frame
-  payload_ptr = payload_offset;
-
-  if(payload_len == 0){
-      goto DROP;
-  }
-  
-  //load first 7 payload bytes in dat array -> for the http filter
-  unsigned long dat[7];
-  int i = 0;
-  int j = 0;
-  for (i = payload_offset ; i < (payload_offset + 7) ; i++){
-    dat[j] = load_byte(skb , i);
-    j++;
-  }
-
-  //HTTP
-  if ( (dat[0] == 'H') && (dat[1] == 'T') && (dat[2] == 'T') && (dat[3] == 'P')){
-    goto KEEP;
-  }
-  //GET
-  if ( (dat[0] == 'G') && (dat[1] == 'E') && (dat[2] == 'T') ){
-    goto KEEP;
-  }
-  //POST
-  if ( (dat[0] == 'P') && (dat[1] == 'O') && (dat[2] == 'S') && (dat[3] == 'T')){
-    goto KEEP;
-  }
-  //PUT
-  if ( (dat[0] == 'P') && (dat[1] == 'U') && (dat[2] == 'T') ){
-    goto KEEP;
-  }
-  //DELETE
-  if ( (dat[0] == 'D') && (dat[1] == 'E') && (dat[2] == 'L') && (dat[3] == 'E') && (dat[4] == 'T') && (dat[5] == 'E')){
-    goto KEEP;
-  }
-  //HEAD
-  if ( (dat[0] == 'H') && (dat[1] == 'E') && (dat[2] == 'A') && (dat[3] == 'D')){
-    goto KEEP;
-  }
-
-  goto DROP;
-
-  KEEP:
-  //-1 return the packet to userspace listening on the socket
-  return -1;
-
-DROP:
-  //0 drop the packet
-  return 0;
-}
-"""
-
-#convert string to hex
-#for debug - to print raw packet in hex
+#convert a string into a string of hex char
+#helper function to print raw packet in hex
+'''
 def toHex(s):
     lst = []
     for ch in s:
@@ -177,58 +31,96 @@ def toHex(s):
         lst.append(hv)
     
     return reduce(lambda x,y:x+y, lst)
+'''
 
-# initialize BPF
-b = BPF(text=bpf_text)
+# initialize BPF - load source code from http-parse.c
+bpf = BPF(src_file = "http-parse.c",debug = 0)
 
-#load function
-fn = b.load_func("handle_ingress", BPF.SOCKET_FILTER)
+#load eBPF program http_filter of type SOCKET_FILTER into the kernel eBPF vm
+#more info about eBPF program types
+#http://man7.org/linux/man-pages/man2/bpf.2.html
+function_http_filter = bpf.load_func("http_filter", BPF.SOCKET_FILTER)
 
-#attach function to pysical interface
-BPF.attach_raw_socket(fn, "eth0")
+#create raw socket, bind it to eth0
+#attach bpf program to socket created
+BPF.attach_raw_socket(function_http_filter, "eth0")
 
-#get socket fd
-sfd = fn.sock
-s = socket.fromfd(sfd,socket.PF_PACKET,socket.SOCK_RAW,socket.IPPROTO_IP)
-s.setblocking(True)
+#get file descriptor of the socket previously created inside BPF.attach_raw_socket
+socket_fd = function_http_filter.sock
+
+#create python socket object, from the file descriptor
+sock = socket.fromfd(socket_fd,socket.PF_PACKET,socket.SOCK_RAW,socket.IPPROTO_IP)
+#set it as blocking socket
+sock.setblocking(True)
 
 while 1:
-  #print ("Reading Packet ...")
-  str = os.read(sfd,2048)
+  #retrieve raw packet from socket
+  packet_str = os.read(socket_fd,2048)
 
-  #DEBUG - print raw packet in hex
-  #hexstr = toHex(str)
-  #print ("%s" % hexstr)
+  #DEBUG - print raw packet in hex format
+  #packet_hex = toHex(packet_str)
+  #print ("%s" % packet_hex)
 
-  #convert into bytearray
-  ba = bytearray(str)
+  #convert packet into bytearray
+  packet_bytearray = bytearray(packet_str)
   
-  ETH_HLEN = 14
-  
-  #total length
-  ip_tlen = ba[ETH_HLEN + 2]
-  ip_tlen = ip_tlen << 8
-  ip_tlen =ip_tlen + ba[ETH_HLEN+3]
-  
-  #ip headet lenght
-  ip_hlen = ba[ETH_HLEN]
-  ip_hlen = ip_hlen & 0x0F
-  ip_hlen = ip_hlen << 2
+  #ethernet header length
+  ETH_HLEN = 14 
 
-  #tcp header lenght
-  tcp_hlen = ba[ETH_HLEN + ip_hlen + 12]
-  tcp_hlen = tcp_hlen & 0xF0
-  tcp_hlen = tcp_hlen >> 2
+  #IP HEADER
+  #https://tools.ietf.org/html/rfc791
+  # 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+  # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  # |Version|  IHL  |Type of Service|          Total Length         |
+  # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  #
+  #IHL : Internet Header Length is the length of the internet header 
+  #value to multiply * 4 byte
+  #e.g. IHL = 5 ; IP Header Length = 5 * 4 byte = 20 byte
+  #
+  #Total Lenght: This 16-bit field defines the entire packet size, 
+  #including header and data, in bytes.
+
+  #calculate packet total lenght
+  total_lenght = packet_bytearray[ETH_HLEN + 2]               #load MSB
+  total_lenght = total_lenght << 8                            #shift MSB
+  total_lenght = total_lenght + packet_bytearray[ETH_HLEN+3]  #add LSB
   
-  #payload offset
-  payload_offset = ETH_HLEN + ip_hlen + tcp_hlen
+  #calculate ip header lenght
+  ip_header_length = packet_bytearray[ETH_HLEN]               #load Byte
+  ip_header_length = ip_header_length & 0x0F                  #mask bits 0..3
+  ip_header_length = ip_header_length << 2                    #shift to obtain lenght
+
+  #TCP HEADER 
+  #https://www.rfc-editor.org/rfc/rfc793.txt
+  #  12              13              14              15  
+  #  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 
+  # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  # |  Data |           |U|A|P|R|S|F|                               |
+  # | Offset| Reserved  |R|C|S|S|Y|I|            Window             |
+  # |       |           |G|K|H|T|N|N|                               |
+  # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  #
+  #Data Offset: This indicates where the data begins.  
+  #The TCP header is an integral number of 32 bits long.
+  #value to multiply * 4 byte
+  #e.g. DataOffset = 5 ; TCP Header Length = 5 * 4 byte = 20 byte
+
+  #calculate tcp header lenght
+  tcp_header_lenght = packet_bytearray[ETH_HLEN + ip_header_length + 12]  #load Byte
+  tcp_header_lenght = tcp_header_lenght & 0xF0                            #mask bit 4..7
+  tcp_header_lenght = tcp_header_lenght >> 2                              #SHR 4 ; SHL 2 -> SHR 2
   
-  #print only first line of HTTP GET/POST - terminate with 0xOD 0xOA (\r\n)
-  #if we want to print all the header print until \r\n\r\n
-  for i in range (payload_offset-1,len(ba)):
-    if (ba[i]== 0x0A):
-      if (ba[i-1] == 0x0D):
+  #calculate payload offset
+  payload_offset = ETH_HLEN + ip_header_length + tcp_header_lenght
+  
+  #print first line of the HTTP GET/POST request
+  #line ends with 0xOD 0xOA (\r\n)
+  #(if we want to print all the header print until \r\n\r\n)
+  for i in range (payload_offset-1,len(packet_bytearray)):
+    if (packet_bytearray[i]== 0x0A):
+      if (packet_bytearray[i-1] == 0x0D):
         break
-    print ("%c" % chr(ba[i]), end = "")
+    print ("%c" % chr(packet_bytearray[i]), end = "")
   print("")
 
