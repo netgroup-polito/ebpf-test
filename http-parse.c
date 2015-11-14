@@ -5,61 +5,6 @@
 #define IP_TCP 	6   
 #define ETH_HLEN 14
 
-/*
-//definitions are already included in <bcc/proto.h> 
-//here there is a copy for a better understanding of the code
-
-struct ethernet_t {
-  unsigned long long  dst:48;
-  unsigned long long  src:48;
-  unsigned int        type:16;
-} BPF_PACKET_HEADER;
-
-struct ip_t {
-  unsigned char   ver:4;           // byte 0
-  unsigned char   hlen:4;
-  unsigned char   tos;
-  unsigned short  tlen;
-  unsigned short  identification; // byte 4
-  unsigned short  ffo_unused:1;
-  unsigned short  df:1;
-  unsigned short  mf:1;
-  unsigned short  foffset:13;
-  unsigned char   ttl;             // byte 8
-  unsigned char   nextp;
-  unsigned short  hchecksum;
-  unsigned int    src;            // byte 12
-  unsigned int    dst;            // byte 16
-} BPF_PACKET_HEADER;
-
-struct udp_t {
-  unsigned short sport;
-  unsigned short dport;
-  unsigned short length;
-  unsigned short crc;
-} BPF_PACKET_HEADER;
-
-struct tcp_t {
-  unsigned short  src_port;   // byte 0
-  unsigned short  dst_port;
-  unsigned int    seq_num;    // byte 4
-  unsigned int    ack_num;    // byte 8
-  unsigned char   offset:4;    // byte 12
-  unsigned char   reserved:4;
-  unsigned char   flag_cwr:1;
-  unsigned char   flag_ece:1;
-  unsigned char   flag_urg:1;
-  unsigned char   flag_ack:1;
-  unsigned char   flag_psh:1;
-  unsigned char   flag_rst:1;
-  unsigned char   flag_syn:1;
-  unsigned char   flag_fin:1;
-  unsigned short  rcv_wnd;
-  unsigned short  cksum;      // byte 16
-  unsigned short  urg_ptr;
-} BPF_PACKET_HEADER;
-*/
-
 /*eBPF program.
   Filter IP and TCP packets, having payload not empty
   and containing "HTTP", "GET", "POST" ... as first bytes of payload
