@@ -23,8 +23,8 @@ import os
 import struct
 import binascii
 
-CLEANUP_N_PACKETS = 100       #run cleanup every CLEANUP_N_PACKETS packets received
-MAX_URL_STRING_LEN = 8192    #max url string len (usually 8K)
+CLEANUP_N_PACKETS = 100     	#run cleanup every CLEANUP_N_PACKETS packets received
+MAX_URL_STRING_LEN = 8192			#max url string len (usually 8K)
 
 #-----FUNCTIONS-BEGIN----------------------#
 
@@ -243,8 +243,7 @@ while 1:
         except:
           print ("error del bpf_session")
 
-  #DEBUG
   #check if dirty entry are present in bpf_sessions
   if (((packet_count) % CLEANUP_N_PACKETS) == 0):
-    print ("-------CLEANUP--PKT#-%d----------------------" % packet_count)
+    print ("--CLEANUP--PKT#-%d--" % packet_count)
     cleanup()
