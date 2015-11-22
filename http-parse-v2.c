@@ -6,14 +6,14 @@
 #define ETH_HLEN 14
 
 struct Key {
-	u32 src_ip;								//source ip
-	u32 dst_ip;								//destination ip
-	unsigned short src_port;	//source port
-	unsigned short dst_port;	//destination port	
+	u32 src_ip;               //source ip
+	u32 dst_ip;               //destination ip
+	unsigned short src_port;  //source port
+	unsigned short dst_port;  //destination port	
 };
 
 struct Leaf {
-  u64 timestamp;						//timestamp in ns
+	u64 timestamp;            //timestamp in ns
 };
 
 //BPF_TABLE(map_type, key_type, leaf_type, table_name, num_entry) 
