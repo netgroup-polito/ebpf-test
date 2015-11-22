@@ -10,7 +10,7 @@ This project aims at:
 
 #http-parse
 
-eBPF application that parses HTTP packets and extracts (and prints on screen) the URL contained in the GET/POST request.
+eBPF application that parses HTTP packets and extracts (and prints on screen) the URL contained in the GET/POST request. Truncate url if too long.
 
 [http-parse.c](http-parse.c)
 
@@ -25,6 +25,26 @@ return -1 -> keep the packet and return it to user space (userspace can read it 
 Python script loads eBPF program into in-kernel virtual machine, create raw socket, bind it to eth0 interface and attach eBPF program to socket created. <br />
 Python script read filtered raw packets from the socket and prints on stdout the first line of the HTTP GET/POST request
 
+#http-parse v2
+
+eBPF application that parses HTTP packets and extracts (and prints on screen) the URL contained in the GET/POST request. Complete version: manage long url splitted in N packets.
+
+[http-parse-v2.c](http-parse.c)
+
+eBPF socket filter.
+Filter IP and TCP packets, having payload not empty and containing "HTTP", "GET", "POST" 
+AND all other packets having same (ip_src,ip_dst,port_src,port_dst). This means beloging to the same "session". <br />
+this additional check avoids url truncation, if url is too long userspace script, if necessary, reassembles urls splitted in 2 or more packets.<br />
+the program is loaded as PROG_TYPE_SOCKET_FILTER and attached to a socket (bind to eth0) <br />
+return  0 -> drop the packet <br />
+return -1 -> keep the packet and return it to user space (userspace can read it from the socket_fd )
+
+[http-parse-v2.py](http-parse.py)
+
+Python script loads eBPF program into in-kernel virtual machine, create raw socket, bind it to eth0 interface and attach eBPF program to socket created. <br />
+Python script read filtered raw packets from the socket, and after some computation, prints on stdout the first line of the HTTP GET/POST request <br />
+It uses shared ebpf map bpf_sessions to keep trace of all the packets of an HTTP session.
+
 # Usage
 
 Require:
@@ -35,4 +55,5 @@ To run:
 
 ```Shell
 $ sudo python http-parse.py
+$ sudo python http-parse-v2.py
 ```
