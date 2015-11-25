@@ -19,20 +19,6 @@ import sys
 import socket
 import os
 
-#convert a string into a string of hex char
-#helper function to print raw packet in hex
-'''
-def toHex(s):
-    lst = []
-    for ch in s:
-        hv = hex(ord(ch)).replace('0x', '')
-        if len(hv) == 1:
-            hv = '0'+hv
-        lst.append(hv)
-    
-    return reduce(lambda x,y:x+y, lst)
-'''
-
 # initialize BPF - load source code from http-parse.c
 bpf = BPF(src_file = "http-parse.c",debug = 0)
 

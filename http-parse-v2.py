@@ -52,9 +52,7 @@ def printUntilCRLF(str):
     return  
 
 #cleanup function
-#in my tests no entry need to cleanup, Because the script do it for me
-#problems in conversion bpf_ktime_get_ns -> time.time()
-#prints remaining entry only for debug
+#prints remaining entry for debug
 def cleanup():
     for key,leaf in bpf_sessions.items():
       print ("key: ",binascii.hexlify(key), " leaf: ", binascii.hexlify(leaf))
