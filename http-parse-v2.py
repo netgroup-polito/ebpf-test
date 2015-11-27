@@ -22,10 +22,12 @@ import socket
 import os
 import struct
 import binascii
+import time
+import pprint
 
-CLEANUP_N_PACKETS = 100     	#run cleanup every CLEANUP_N_PACKETS packets received
-MAX_URL_STRING_LEN = 8192			#max url string len (usually 8K)
-
+CLEANUP_N_PACKETS  = 50      #run cleanup every CLEANUP_N_PACKETS packets received
+MAX_URL_STRING_LEN = 8192     #max url string len (usually 8K)
+MAX_AGE_SECONDS    = 30       #max age entry in bpf_sessions map
 #-----FUNCTIONS-BEGIN----------------------#
 
 #convert a bin string into a string of hex char
@@ -52,10 +54,28 @@ def printUntilCRLF(str):
     return  
 
 #cleanup function
-#prints remaining entry for debug
 def cleanup():
     for key,leaf in bpf_sessions.items():
-      print ("key: ",binascii.hexlify(key), " leaf: ", binascii.hexlify(leaf))
+      print ("BEFORE - key: ",binascii.hexlify(key), " leaf: ", binascii.hexlify(leaf))
+    #get current time in seconds
+    current_time = int(time.time())
+    #looking for leaf having:
+    #timestap  == 0        --> update with current timestamp
+    #AGE > MAX_AGE_SECONDS --> delete item
+    for key,leaf in bpf_sessions.items():
+      try:
+        current_leaf = bpf_sessions[key]
+        #set timestamp if timestamp == 0
+        if (current_leaf.timestamp == 0):
+          bpf_sessions[key] = bpf_sessions.Leaf(current_time)
+        else:
+          #delete older entries
+          if (current_time - current_leaf.timestamp > MAX_AGE_SECONDS):
+            del bpf_sessions[key]
+      except:
+        print("cleanup exception.")
+    for key,leaf in bpf_sessions.items():
+      print ("AFTER - key: ",binascii.hexlify(key), " leaf: ", binascii.hexlify(leaf))
     return 
 
 #-----FUNCTIONS-END-------------------------#
@@ -243,5 +263,4 @@ while 1:
 
   #check if dirty entry are present in bpf_sessions
   if (((packet_count) % CLEANUP_N_PACKETS) == 0):
-    print ("--CLEANUP--PKT#-%d--" % packet_count)
     cleanup()

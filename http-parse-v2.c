@@ -13,7 +13,7 @@ struct Key {
 };
 
 struct Leaf {
-	u64 timestamp;            //timestamp in ns
+	int timestamp;            //timestamp in ns
 };
 
 //BPF_TABLE(map_type, key_type, leaf_type, table_name, num_entry) 
@@ -127,9 +127,7 @@ int http_filter(struct __sk_buff *skb) {
 	//check if packet belong to an HTTP session
 	struct Leaf * lookup_leaf = sessions.lookup(&key);
 	if(lookup_leaf){
-		//update timestamp & send packet to userspace
-		leaf.timestamp = bpf_ktime_get_ns();
-		sessions.update(&key,&leaf);
+		//send packet to userspace
 		goto KEEP;
 	}
 	goto DROP;
@@ -137,7 +135,7 @@ int http_filter(struct __sk_buff *skb) {
 	//keep the packet and send it to userspace retruning -1
 	HTTP_MATCH:
 	//if not already present, insert into map <Key, Leaf>
-	leaf.timestamp = bpf_ktime_get_ns();
+	leaf.timestamp = 0;
 	sessions.lookup_or_init(&key, &leaf);
 	sessions.update(&key,&leaf);
 	
