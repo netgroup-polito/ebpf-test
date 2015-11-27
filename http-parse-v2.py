@@ -23,9 +23,8 @@ import os
 import struct
 import binascii
 import time
-import pprint
 
-CLEANUP_N_PACKETS  = 50      #run cleanup every CLEANUP_N_PACKETS packets received
+CLEANUP_N_PACKETS  = 50       #run cleanup every CLEANUP_N_PACKETS packets received
 MAX_URL_STRING_LEN = 8192     #max url string len (usually 8K)
 MAX_AGE_SECONDS    = 30       #max age entry in bpf_sessions map
 #-----FUNCTIONS-BEGIN----------------------#
@@ -55,8 +54,6 @@ def printUntilCRLF(str):
 
 #cleanup function
 def cleanup():
-    for key,leaf in bpf_sessions.items():
-      print ("BEFORE - key: ",binascii.hexlify(key), " leaf: ", binascii.hexlify(leaf))
     #get current time in seconds
     current_time = int(time.time())
     #looking for leaf having:
@@ -74,8 +71,6 @@ def cleanup():
             del bpf_sessions[key]
       except:
         print("cleanup exception.")
-    for key,leaf in bpf_sessions.items():
-      print ("AFTER - key: ",binascii.hexlify(key), " leaf: ", binascii.hexlify(leaf))
     return 
 
 #-----FUNCTIONS-END-------------------------#
